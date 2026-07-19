@@ -18,7 +18,6 @@ Globally, the `ActiveRecord::ConnectionAdapters` have a set of classes used to h
 def indexes(table_name)
   raise NotImplementedError, "#indexes is not implemented"
 end
-)
 ```
 
 # Register your adapter
