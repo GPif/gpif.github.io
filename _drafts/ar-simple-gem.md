@@ -7,17 +7,27 @@ tags: [ruby, activerecord, database]     # TAG names should always be lowercase
 compress_html: false
 ---
 
+In the [previous article]({% link _posts/2026-07-10-arfirst.md %}), we introduced the concept of connectors in Active Record with a quick overview on how connector are implemented with a quick view of the different class and modules at stakes.
+Now, let's dive a bit deeper and create or own gem to implement or own connector. We will keep it simple by using an in memory SQLite3 as the database.
+
+# Structure of our simple gem
+
+So first lets create the scaffold of our gem and dependancies. You can see that we globaly only need the activerecord lib and the database connector gem :
+
 ```bash
 bundle gem arsimple
 ```
 
-Add dependecies :
+Add dependecies in the gemspec :
+
+```gemspec
+  # arexemple.gemspec
 
   spec.add_dependency "activerecord"
   spec.add_dependency "sqlite3"
-  
+```
 
-lib/active_record/connection_adapters/my_adapter.rb
+Our connector is a class that inherit the abstract connector as defined in activerecord so, create `lib/active_record/connection_adapters/my_adapter.rb` and create our adapter class.
 
 ```ruby
 # lib/active_record/connection_adapters/my_adapter.rb
@@ -33,7 +43,7 @@ module ActiveRecord
 end
 ```
 
-do not forget to require our connector :
+Also, in our main lib class, we do not forget to require our connector.
 
 ```ruby
 # lib/arsimple.rb
@@ -41,51 +51,59 @@ do not forget to require our connector :
 require "active_record/connection_adapters/my_adapter"
 ```
 
+# Let's do it with TDD
 
-# TDD
+Implementing a connector can go very far with the specificities of the database and also of the needed feature. If you need sharding, asynchronous query or any others, you will need to add your specific codes. For now we will stick to the basic, connect, create schema and tables and do basic CRUD on our records.
+In my opinion, the best way to do it is to develops it using Test Driven Development. We first create our test according to our needs and let just make it works. So we will write our test, view the errors and explain on how to fix that.
+Let's start with the connection.
 
 ## Connection 
 
 Test :
 
 ```ruby
-    it "connect to the db" do
-
-        ActiveRecord::Base.establish_connection(
-          adapter: 'my_adapter',
-          database: ':memory:' # As it is sqlite
-        )
-        expect(ActiveRecord::Base.connection.class).to eq(ActiveRecord::ConnectionAdapters::MyAdapter)
-    end
+  it "connect to the db" do
+    ActiveRecord::Base.establish_connection(
+      adapter: 'my_adapter',
+      database: ':memory:' # As it is sqlite
+    )
+    expect(ActiveRecord::Base.connection.class).to eq(ActiveRecord::ConnectionAdapters::MyAdapter)
+  end
 ```
 
 Error :
 
 ```
-    ActiveRecord::AdapterNotFound:
-       Database configuration specifies nonexistent 'arconnector' adapter. Available adapters are: mysql2, postgresql, sqlite3, trilogy. Ensure that the adapter is spelled correctly in config/database.yml and that you've added the necessary adapter gem to your Gemfile if it's not in the list of available adapters.
+  ActiveRecord::AdapterNotFound:
+     Database configuration specifies nonexistent 'my_adapter' adapter. Available adapters are: mysql2, postgresql, sqlite3, trilogy. Ensure that the adapter is spelled correctly in config/database.yml and that you've added the necessary adapter gem to your Gemfile if it's not in the list of available adapters.
 ```
+
+The error tell the our adapter is not found. On init, the lib look if the adapter is in a specific register call @adapters. To register it there is a specific `register` method in the `ConnectionAdapters` module.
 
 Fix :
 
 ```ruby
-    register("my_adapter", "ActiveRecord::ConnectionAdapters::MyAdapter", "active_record/connection_adapters/my_adapter")
+  # active_record/connection_adapters/my_adapter 
+
+  register("my_adapter", "ActiveRecord::ConnectionAdapters::MyAdapter", "active_record/connection_adapters/my_adapter")
 ```
 
 ## Schema statements
 
+Once connected, let's create our first table with the schema DSL.
+
 Test :
 
 ```ruby
-    it "create a table" do
-      expect {
-        ActiveRecord::Schema.define(version: 1) do
-          create_table :shows, force: true do |t|
-            t.string :name
-          end
-        end
-      }.not_to raise_error
+it "create a table" do
+  expect {
+    ActiveRecord::Schema.define(version: 1) do
+      create_table :shows, force: true do |t|
+        t.string :name
+      end
     end
+  }.not_to raise_error
+end
 ```
 
 Error :
@@ -94,9 +112,9 @@ Error :
 ActiveRecord::ConnectionAdapters::Quoting::ClassMethods#quote_column_name': NotImplementedError (NotImplementedError)
 ```
 
-Here we need to implement the `quote_column_name` and a bunch of unimplemented 
-
-First complete the structure :
+We start to reach the point where we need to implement database specific methods. Here we need to tell our connector how to add quote on our column name. 
+As said before, the methods to implement might be different from a database to another. Here for example, the methods to quote a table name call the method to quote a column. But the database might need a different quoting. For our sqlite database, we need to use double quotes in `quote_column_name`.
+But the quote method is not the only one to be implemented. It is time to define our structure with the different modules define in the abstract adapter. 
 
 ```
 quoting.rb
@@ -104,7 +122,7 @@ database_statements.rb
 schema_statements.rb
 ```
 
-Then requirement :
+Then add the requirements in our adapter file :
 
 ```ruby
 require "active_record/connection_adapters/my/quoting"
@@ -112,24 +130,26 @@ require "active_record/connection_adapters/my/database_statements"
 require "active_record/connection_adapters/my/schema_statements"
 ```
 
-And implement the minimum required methods :
+The minimum list of methods to implement to be able to create our table is :
 
-
-MyAdapter :
+`MyAdapter` :
  * `native_database_types`
  * `reconnect`
 
-Quoting :
+`Quoting` :
  * `quote_column_name`
 
-DatabaseStatements :
+`DatabaseStatements` :
  * `write_query?`
  * `preform_query`
  * `cast_result`
 
-SchemaStatements :
+`SchemaStatements` :
 * `data_source_sql`
 
+In details :
+
+* Use double quote to quote table name, column and others
 
 ```ruby
 module ActiveRecord
@@ -147,6 +167,10 @@ module ActiveRecord
   end
 end
 ```
+
+* Detect if the query is to write data or not
+* The `perform_query` is one of the most important as it is the methods that pass the query to the connector.
+* Cast the result into ActiveRecord::Result, the active record format of returned data. Here, as described, SQLite3 already return the data in the correct format.
 
 ```ruby
 # frozen_string_literal: true
@@ -199,6 +223,8 @@ end
 end
 ```
 
+* Describe how to fetch metadata for a table or view.
+
 ```ruby
 # frozen_string_literal: true
 
@@ -238,6 +264,9 @@ module ActiveRecord
 end
 
 ```
+
+* `reconnect` is the methods call by `connect`. We create a simple connection and store it in @raw_connection variable.
+* List the native database types to convert database type into ruby type (and vis versa).
 
 ```ruby
 # frozen_string_literal: true
@@ -296,9 +325,12 @@ end
 
 ```
 
+That is indeed a lot of thing to implement, but those are the basic things that you need to implement to have a working adapter.
+So now as we have what we need to create a basic schema, let's see how we can use it to do basic Create Update Request and Delete.
+
 ## CRUD
 
-### Create
+### Create and show
 
 Test :
 
@@ -339,7 +371,6 @@ Error
 NoMethodError:
        undefined method 'column_definitions' for an instance of ActiveRecord::ConnectionAdapters::MyAdapter
 ```
-
 
 ```ruby
   # MyAdapter  
@@ -404,5 +435,32 @@ end
 end
 ```
 
+```ruby
+# To return ID
+def supports_insert_returning?
+  true
+end
+```
 
+### Update
 
+Test :
+
+```ruby
+  it "update record" do
+    s = Show.create(name: "Breaking Bad", episodes: 42)
+    s.episodes = 47
+    s.save!
+
+    expect(s.reload.episodes).to eq(47)
+  end
+```
+
+Error :
+
+```
+Failure/Error: s.save!
+
+NotImplementedError:
+  NotImplementedError
+```
