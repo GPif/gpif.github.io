@@ -7,43 +7,86 @@ tags: [ruby, activerecord, database]     # TAG names should always be lowercase
 compress_html: false
 ---
 
-In the [previous article]({% link _posts/2026-07-10-arfirst.md %}), we introduced the concept of connectors in Active Record with a quick overview on how connector are implemented with a quick view of the different class and modules at stakes.
-Now, let's dive a bit deeper and create or own gem to implement or own connector. We will keep it simple by using an in memory SQLite3 as the database.
+In the [previous article]({% link _posts/2026-07-10-arfirst.md %}), we explored how Active Record adapters are structured and introduced the main classes and modules involved in a connector.
 
-# Structure of our simple gem
+In this article, we'll take the next step by building a minimal Active Record adapter from scratch.
 
-So first lets create the scaffold of our gem and dependancies. You can see that we globaly only need the activerecord lib and the database connector gem :
+Writing a production-ready adapter is a significant undertaking. Every database has its own SQL dialect, capabilities, and edge cases, and Active Record itself exposes a surprisingly rich API. Fortunately, we don't need to implement everything to understand how adapters work.
+
+To keep the implementation focused on Active Record rather than database internals, we'll use an in-memory SQLite database as our backend. SQLite already handles SQL parsing, storage, and query execution, allowing us to concentrate entirely on the adapter layer.
+
+Rather than implementing dozens of methods up front, we'll follow a __Test-Driven Development (TDD)__ approach.
+
+For each feature, we'll:
+
+1. Write a failing test.
+2. Observe the error produced by Active Record.
+3. Understand what Active Record expects from the adapter.
+4. Implement the smallest amount of code required to make the test pass.
+
+By the end of this article, we'll have a working adapter capable of:
+
+* establishing a connection,
+* creating tables using the Active Record schema DSL,
+* defining models,
+* performing basic CRUD operations.
+
+Along the way, we'll also discover which parts of the Active Record adapter API are truly essential.
+
+---
+
+# Project Setup
+
+Let's begin by generating the skeleton of our gem.
 
 ```bash
 bundle gem arsimple
 ```
 
-Add dependecies in the gemspec :
+Our adapter only depends on two libraries:
+
+* `activerecord`, which provides the adapter infrastructure;
+* `sqlite3`, which will act as the underlying database engine.
+
+Add both dependencies to your gemspec:
 
 ```gemspec
-  # arexemple.gemspec
+# arsimple.gemspec
 
-  spec.add_dependency "activerecord"
-  spec.add_dependency "sqlite3"
+spec.add_dependency "activerecord"
+spec.add_dependency "sqlite3"
 ```
 
-Our connector is a class that inherit the abstract connector as defined in activerecord so, create `lib/active_record/connection_adapters/my_adapter.rb` and create our adapter class.
+## Creating the adapter
+
+Every Active Record adapter inherits from `AbstractAdapter`.
+
+This base class implements all the database-independent behavior and defines the API expected by Active Record. Our adapter will simply provide the database-specific pieces by overriding the appropriate methods.
+
+Create the following file:
+
+```text
+lib/
+└── active_record/
+    └── connection_adapters/
+        └── my_adapter.rb
+```
+
+with the following implementation:
 
 ```ruby
-# lib/active_record/connection_adapters/my_adapter.rb
-
 require "active_record"
 require "active_record/connection_adapters/abstract_adapter"
 
 module ActiveRecord
-    module ConnectionAdapters
-        class MyAdapter < AbstractAdapter
-        end
+  module ConnectionAdapters
+    class MyAdapter < AbstractAdapter
     end
+  end
 end
 ```
 
-Also, in our main lib class, we do not forget to require our connector.
+Finally, don't forget to load the adapter from your gem's entry point:
 
 ```ruby
 # lib/arsimple.rb
@@ -51,113 +94,175 @@ Also, in our main lib class, we do not forget to require our connector.
 require "active_record/connection_adapters/my_adapter"
 ```
 
-# Let's do it with TDD
+At this point, our adapter doesn't do anything yet—but that's perfectly fine.
 
-Implementing a connector can go very far with the specificities of the database and also of the needed feature. If you need sharding, asynchronous query or any others, you will need to add your specific codes. For now we will stick to the basic, connect, create schema and tables and do basic CRUD on our records.
-In my opinion, the best way to do it is to develops it using Test Driven Development. We first create our test according to our needs and let just make it works. So we will write our test, view the errors and explain on how to fix that.
-Let's start with the connection.
+The goal isn't to implement everything at once. Instead, we'll let our tests reveal which methods Active Record actually needs, implementing them one by one as we encounter each failure.
 
-## Connection 
+---
 
-Test :
+# Test-Driven Development
 
-```ruby
-  it "connect to the db" do
-    ActiveRecord::Base.establish_connection(
-      adapter: 'my_adapter',
-      database: ':memory:' # As it is sqlite
-    )
-    expect(ActiveRecord::Base.connection.class).to eq(ActiveRecord::ConnectionAdapters::MyAdapter)
-  end
-```
+An Active Record adapter exposes a surprisingly large API. Depending on the database you're targeting, you may eventually need to implement support for transactions, prepared statements, migrations, asynchronous queries, sharding, savepoints, and much more.
 
-Error :
+Fortunately, very little of this is required to get started.
 
-```
-  ActiveRecord::AdapterNotFound:
-     Database configuration specifies nonexistent 'my_adapter' adapter. Available adapters are: mysql2, postgresql, sqlite3, trilogy. Ensure that the adapter is spelled correctly in config/database.yml and that you've added the necessary adapter gem to your Gemfile if it's not in the list of available adapters.
-```
+Rather than trying to implement every method up front, we'll let Active Record guide us. Each time we write a test, Active Record will eventually reach a method that our adapter doesn't implement yet. The resulting exception tells us exactly which piece of the adapter is missing.
 
-The error tell the our adapter is not found. On init, the lib look if the adapter is in a specific register call @adapters. To register it there is a specific `register` method in the `ConnectionAdapters` module.
+This has two major advantages:
 
-Fix :
+* we only implement the methods that are actually required;
+* we gain a much better understanding of how Active Record interacts with an adapter internally.
+
+Let's start with the most fundamental feature: establishing a connection.
+
+---
+
+# Establishing a Connection
+
+The first responsibility of an adapter is, unsurprisingly, to connect to a database.
+
+We'll start with the smallest possible test:
 
 ```ruby
-  # active_record/connection_adapters/my_adapter 
+it "connects to the database" do
+  ActiveRecord::Base.establish_connection(
+    adapter: "my_adapter",
+    database: ":memory:"
+  )
 
-  register("my_adapter", "ActiveRecord::ConnectionAdapters::MyAdapter", "active_record/connection_adapters/my_adapter")
+  expect(ActiveRecord::Base.connection)
+    .to be_a(ActiveRecord::ConnectionAdapters::MyAdapter)
+end
 ```
 
-## Schema statements
+Running the test immediately produces the following error:
 
-Once connected, let's create our first table with the schema DSL.
+```
+ActiveRecord::AdapterNotFound:
+Database configuration specifies nonexistent 'my_adapter' adapter.
+Available adapters are: mysql2, postgresql, sqlite3, trilogy.
+```
 
-Test :
+The message is actually quite informative.
+
+Active Record doesn't scan every installed gem looking for adapters. Instead, it maintains an internal registry mapping adapter names (such as `"postgresql"` or `"sqlite3"`) to the Ruby class implementing the adapter.
+
+When `establish_connection` is called, Active Record simply looks up the requested adapter name in this registry. Since `"my_adapter"` isn't registered yet, it has no idea which class should be instantiated.
+
+## Registering the adapter
+
+To make our adapter discoverable, we need to register it when our gem is loaded.
+
+At the bottom of `my_adapter.rb`, add the following call:
 
 ```ruby
-it "create a table" do
-  expect {
+register(
+  "my_adapter",
+  "ActiveRecord::ConnectionAdapters::MyAdapter",
+  "active_record/connection_adapters/my_adapter"
+)
+```
+
+The three arguments are:
+
+* the adapter name used in `establish_connection`;
+* the fully qualified name of the adapter class;
+* the file that should be required if it hasn't already been loaded.
+
+With this registration in place, Active Record can finally locate our adapter class.
+
+Running the test again gets us one step further... and immediately reveals the next missing piece.
+
+This is exactly the workflow we'll follow throughout the rest of this article: write a test, understand why it fails, implement the missing behavior, and repeat until we have a functional adapter.
+
+---
+
+# Creating Our First Table
+
+Connecting to the database is a good start, but it's not very useful on its own. Let's see if our adapter is capable of creating a table using Active Record's schema DSL.
+
+We'll begin with another simple test:
+
+```ruby
+it "creates a table" do
+  expect do
     ActiveRecord::Schema.define(version: 1) do
       create_table :shows, force: true do |t|
         t.string :name
       end
     end
-  }.not_to raise_error
+  end.not_to raise_error
 end
 ```
 
-Error :
+Running the test immediately produces a new exception:
 
-```
-ActiveRecord::ConnectionAdapters::Quoting::ClassMethods#quote_column_name': NotImplementedError (NotImplementedError)
-```
-
-We start to reach the point where we need to implement database specific methods. Here we need to tell our connector how to add quote on our column name. 
-As said before, the methods to implement might be different from a database to another. Here for example, the methods to quote a table name call the method to quote a column. But the database might need a different quoting. For our sqlite database, we need to use double quotes in `quote_column_name`.
-But the quote method is not the only one to be implemented. It is time to define our structure with the different modules define in the abstract adapter. 
-
-```
-quoting.rb
-database_statements.rb
-schema_statements.rb
+```text
+NotImplementedError:
+ActiveRecord::ConnectionAdapters::Quoting::ClassMethods#quote_column_name
 ```
 
-Then add the requirements in our adapter file :
+Once again, the exception tells us exactly what's missing.
+
+## Why does Active Record need `quote_column_name`?
+
+Before Active Record can execute any SQL, it must generate it.
+
+Suppose we create the following table:
 
 ```ruby
-require "active_record/connection_adapters/my/quoting"
-require "active_record/connection_adapters/my/database_statements"
-require "active_record/connection_adapters/my/schema_statements"
+create_table :shows do |t|
+  t.string :name
+end
 ```
 
-The minimum list of methods to implement to be able to create our table is :
+Internally, Active Record will eventually build a statement similar to:
 
-`MyAdapter` :
- * `native_database_types`
- * `reconnect`
+```sql
+CREATE TABLE "shows" (
+  "name" varchar
+)
+```
 
-`Quoting` :
- * `quote_column_name`
+Notice that both the table name and the column name are quoted.
 
-`DatabaseStatements` :
- * `write_query?`
- * `preform_query`
- * `cast_result`
+This isn't just cosmetic. Quoting identifiers allows SQL keywords, spaces, or special characters to be handled correctly while protecting generated SQL from syntax errors.
 
-`SchemaStatements` :
-* `data_source_sql`
+The exact quoting syntax depends on the database:
 
-In details :
+| Database   | Identifier     |
+| ---------- | -------------- |
+| PostgreSQL | `"column"`     |
+| SQLite     | `"column"`     |
+| MySQL      | `` `column` `` |
+| SQL Server | `[column]`     |
 
-* Use double quote to quote table name, column and others
+Because we're building a SQLite-based adapter, we simply need to quote identifiers using standard double quotes.
+
+## Implementing the quoting module
+
+Although we could implement `quote_column_name` directly inside our adapter, Active Record separates responsibilities into modules. Following the same organization makes our adapter easier to understand and keeps it consistent with the built-in adapters.
+
+Create a new file:
+
+```text
+lib/
+└── active_record/
+    └── connection_adapters/
+        └── my/
+            └── quoting.rb
+```
+
+Then implement the quoting logic:
 
 ```ruby
 module ActiveRecord
   module ConnectionAdapters
     module My
-      module Quoting # :nodoc:
-        extend ActiveSupport::Concern # :nodoc:
-        module ClassMethods # :nodoc:
+      module Quoting
+        extend ActiveSupport::Concern
+
+        module ClassMethods
           def quote_column_name(column_name)
             %("#{column_name.to_s.gsub('"', '""')}")
           end
@@ -168,62 +273,211 @@ module ActiveRecord
 end
 ```
 
-* Detect if the query is to write data or not
-* The `perform_query` is one of the most important as it is the methods that pass the query to the connector.
-* Cast the result into ActiveRecord::Result, the active record format of returned data. Here, as described, SQLite3 already return the data in the correct format.
+Finally, require and include the module in your adapter:
 
 ```ruby
-# frozen_string_literal: true
+require "active_record/connection_adapters/my/quoting"
 
-module ActiveRecord
-  module ConnectionAdapters
-    module My
-      module DatabaseStatements
-        # Determines whether the SQL statement is a write query.
-        def write_query?(sql)
-          read_query = ActiveRecord::ConnectionAdapters::AbstractAdapter.build_read_query_regexp(
-            :pragma
-          )
-          !read_query.match?(sql)
-        end
-
-        private
-
-        def perform_query(raw_connection, intent, binds, type_casted_binds, prepare:, notification_payload:, batch:)
-          binding.irb if batch
-
-          total_changes_before_query = raw_connection.total_changes
-          stmt = raw_connection.prepare(intent)
-          begin
-            result = if stmt.column_count.zero? # No return
-                       stmt.step
-                       affected_rows = raw_connection.total_changes > total_changes_before_query ? raw_connection.changes : 0
-                       ActiveRecord::Result.empty(affected_rows: affected_rows)
-                     else
-                       rows = stmt.to_a
-                       affected_rows = raw_connection.total_changes > total_changes_before_query ? raw_connection.changes : 0
-                       ActiveRecord::Result.new(stmt.columns, rows, stmt.types.map do |t|
-                         type_map.lookup(t)
-                       end, affected_rows: affected_rows)
-                     end
-          ensure
-            stmt.close
-          end
-          result
-        end
-
-        def cast_result(result)
-          # Given that SQLite3 doesn't have a Result type, raw_execute already returns an ActiveRecord::Result
-          # so we have nothing to cast here.
-          result
-        end
-      end
-    end
-end
+class MyAdapter < AbstractAdapter
+  include My::Quoting
 end
 ```
 
-* Describe how to fetch metadata for a table or view.
+Running the test again gets us a little further before another exception is raised.
+
+This is exactly what we want.
+
+Each failure uncovers another responsibility of an Active Record adapter. Instead of trying to understand the entire adapter API at once, we're discovering it organically, one missing method at a time.
+
+---
+
+# Executing SQL
+
+After implementing identifier quoting, our test progresses a little further before failing again.
+
+This time, Active Record is no longer trying to generate SQL—it is trying to execute it.
+
+An adapter has two distinct responsibilities:
+
+* generating SQL that matches the target database;
+* executing that SQL and translating the results back into objects that Active Record understands.
+
+The second responsibility is handled by the `DatabaseStatements` module.
+
+Let's create it first:
+
+```text
+lib/
+└── active_record/
+    └── connection_adapters/
+        └── my/
+            └── database_statements.rb
+```
+
+and require it from our adapter:
+
+```ruby
+require "active_record/connection_adapters/my/database_statements"
+
+class MyAdapter < AbstractAdapter
+  include My::DatabaseStatements
+end
+```
+
+As we continue running our test suite, Active Record gradually asks our adapter to implement several methods.
+
+Rather than looking at them as a long checklist, it's easier to understand the role each one plays.
+
+---
+
+## Is this query modifying the database?
+
+The first method Active Record needs is `write_query?`.
+
+```ruby
+def write_query?(sql)
+  read_query = ActiveRecord::ConnectionAdapters::AbstractAdapter
+    .build_read_query_regexp(:pragma)
+
+  !read_query.match?(sql)
+end
+```
+
+Active Record uses this method to distinguish between queries that only read data (`SELECT`, `PRAGMA`, ...) and queries that modify the database (`INSERT`, `UPDATE`, `DELETE`, `CREATE TABLE`, ...).
+
+This information is used internally for features such as transaction handling, query caching, and connection management.
+
+Fortunately, Active Record already provides a helper to recognize read queries. We simply extend it to treat SQLite's `PRAGMA` statements as read-only operations.
+
+---
+
+## Executing a statement
+
+The most important method in the entire adapter is `perform_query`.
+
+Every SQL statement eventually reaches this method.
+
+Its responsibilities are surprisingly simple:
+
+1. prepare the SQL statement;
+2. bind any parameters;
+3. execute it;
+4. collect the results;
+5. return an `ActiveRecord::Result`.
+
+A simplified view of the execution flow looks like this:
+
+```text
+Show.create(...)
+        │
+        ▼
+ Active Record
+        │
+        ▼
+perform_query(...)
+        │
+        ▼
+SQLite3::Database
+        │
+        ▼
+ActiveRecord::Result
+```
+
+Our implementation closely follows this sequence:
+
+```ruby
+def perform_query(raw_connection, sql, binds, type_casted_binds,
+                  prepare:, notification_payload:, batch:)
+
+  total_changes_before_query = raw_connection.total_changes
+
+  stmt = raw_connection.prepare(sql)
+
+  begin
+    stmt.bind_params(type_casted_binds) unless binds.empty?
+
+    result =
+      if stmt.column_count.zero?
+        stmt.step
+
+        affected_rows =
+          raw_connection.total_changes > total_changes_before_query ?
+            raw_connection.changes : 0
+
+        ActiveRecord::Result.empty(
+          affected_rows: affected_rows
+        )
+      else
+        rows = stmt.to_a
+
+        affected_rows =
+          raw_connection.total_changes > total_changes_before_query ?
+            raw_connection.changes : 0
+
+        ActiveRecord::Result.new(
+          stmt.columns,
+          rows,
+          stmt.types.map { |t| type_map.lookup(t) },
+          affected_rows: affected_rows
+        )
+      end
+  ensure
+    stmt.close
+  end
+
+  result
+end
+```
+
+Although the method appears long, it only performs three operations:
+
+* execute the SQL;
+* collect the returned rows (if any);
+* wrap everything inside an `ActiveRecord::Result`.
+
+This final step is important because the rest of Active Record expects query results to use this common representation, regardless of the underlying database.
+
+---
+
+## Returning query results
+
+Some database drivers return their own proprietary result objects.
+
+In that case, the adapter must convert them into an `ActiveRecord::Result` by implementing `cast_result`.
+
+SQLite is a little different.
+
+Our implementation of `perform_query` already builds the expected object, so there is nothing left to convert:
+
+```ruby
+def cast_result(result)
+  result
+end
+```
+
+---
+
+At this point, our adapter has learned how to execute SQL.
+
+However, Active Record still doesn't know anything about the database itself. Before it can create tables or map models to them, it needs to discover which tables already exist and inspect their structure.
+
+That's the responsibility of the `SchemaStatements` module, which we'll implement next.
+
+---
+
+## Schema Statements & Tying it Together
+
+To get our "creates a table" test passing, Active Record needs to query the schema to ensure it's doing the right thing. We need to implement `SchemaStatements` and update our main adapter file to handle initialization and basic type mapping.
+
+## Create the schema statements file:
+
+```
+lib/
+└── active_record/
+    └── connection_adapters/
+        └── my/
+            └── schema_statements.rb
+```
 
 ```ruby
 # frozen_string_literal: true
@@ -265,8 +519,7 @@ end
 
 ```
 
-* `reconnect` is the methods call by `connect`. We create a simple connection and store it in @raw_connection variable.
-* List the native database types to convert database type into ruby type (and vis versa).
+Now, let's bring everything together in our main adapter file. We need to add the `reconnect` method (which actually establishes the SQLite connection) and list our `native_database_types` so Active Record knows how to map Ruby types to SQL types.
 
 ```ruby
 # frozen_string_literal: true
@@ -325,14 +578,13 @@ end
 
 ```
 
-That is indeed a lot of thing to implement, but those are the basic things that you need to implement to have a working adapter.
-So now as we have what we need to create a basic schema, let's see how we can use it to do basic Create Update Request and Delete.
+That is indeed a lot of things to implement, but those are the basic building blocks you need to have a working schema. Now that we have them, let's see how we can use our adapter to do basic Create, Read, Update, and Delete operations.
 
-## CRUD
+## CRUD Operations
 
-### Create and show
+### Create and Read 
 
-Test :
+Let's write a test to verify we can create a record and read it back:
 
 ```ruby
   context "with connextion and schema" do
@@ -365,15 +617,17 @@ Test :
   end
 ```
 
-Error
+Give us the new error:
 
 ```
 NoMethodError:
        undefined method 'column_definitions' for an instance of ActiveRecord::ConnectionAdapters::MyAdapter
 ```
 
+To resolve this, we need to add `column_definitions` to our main adapter. This method queries SQLite to figure out what columns exist on a given table.
+
 ```ruby
-  # MyAdapter  
+  # Add to MyAdapter  
 
   def column_definitions(table_name)
     structure = internal_exec_query("PRAGMA table_info(#{quote_table_name(table_name)})", "SCHEMA",
@@ -407,6 +661,8 @@ def new_column_from_field(_table_name, field, _definitions)
 end
 ```
 
+We also need to tell Active Record how to find the primary key of our table by adding `primary_keys` to our `DatabaseStatements`module:
+
 ```ruby
 # database_statements 
         
@@ -418,6 +674,8 @@ def primary_keys(_tables)
   nil
 end
 ```
+
+Also now some of our query need to bind paramaters. Here doing `Show.first` is translated `SELECT * FROM SHOWS LIMIT ?` with a binding with 1. So we have to alter the perform_query to do it. 
 
 ```ruby
 # database_statements 
@@ -435,6 +693,8 @@ end
 end
 ```
 
+Also we need to return the ID of the inserted row, otherwise we cannot link the ruby record and database record. The solution is to add the 'RETURNING id' to the insert, in active record it mean activate the `supports_insert_returning?`method. 
+
 ```ruby
 # To return ID
 def supports_insert_returning?
@@ -442,7 +702,7 @@ def supports_insert_returning?
 end
 ```
 
-### Update
+### Update and Delete
 
 Test :
 
@@ -463,4 +723,23 @@ Failure/Error: s.save!
 
 NotImplementedError:
   NotImplementedError
+```
+
+The missing part is to return the affected row 
+
+```ruby
+def affected_rows(result)
+  result.affected_rows
+end
+```
+
+There is nothing speciat to do for delete, the test is directly passing.
+
+```ruby
+it "delete record" do
+  s = Show.create(name: "Breaking Bad", episodes: 42)
+  expect(Show.count).to eq(1)
+  s.destroy
+  expect(Show.count).to eq(0)
+end
 ```
