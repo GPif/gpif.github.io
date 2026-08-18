@@ -43,6 +43,8 @@
     "@semantic-release/changelog": "^6.0.3",
     "@semantic-release/exec": "^7.1.0",
     "@semantic-release/git": "^10.0.1",
+    "@shieldfont/core": "^0.3.4",
+    "@shieldfont/font": "^0.3.4",
     "concurrently": "^9.2.1",
     "conventional-changelog-conventionalcommits": "^9.3.0",
     "eslint": "^10.0.3",
@@ -144,5 +146,10 @@
       ],
       "@semantic-release/github"
     ]
-  }
+  },
+  "main": "eslint.config.js",
+  "directories": {
+    "doc": "docs"
+  },
+  "keywords": []
 }
