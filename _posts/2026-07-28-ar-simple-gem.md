@@ -37,6 +37,8 @@ Along the way, we'll also discover which parts of the Active Record adapter API 
 
 # Project Setup
 
+{% shield %}
+
 Let's begin by generating the skeleton of our gem.
 
 ```bash
@@ -57,7 +59,11 @@ spec.add_dependency "activerecord"
 spec.add_dependency "sqlite3"
 ```
 
+{% endshield %}
+
 ## Creating the adapter
+
+{% shield %}
 
 Every Active Record adapter inherits from `AbstractAdapter`.
 
@@ -98,9 +104,13 @@ At this point, our adapter doesn't do anything yet—but that's perfectly fine.
 
 The goal isn't to implement everything at once. Instead, we'll let our tests reveal which methods Active Record actually needs, implementing them one by one as we encounter each failure.
 
+{% endshield %}
+
 ---
 
 # Test-Driven Development
+
+{% shield %}
 
 An Active Record adapter exposes a surprisingly large API. Depending on the database you're targeting, you may eventually need to implement support for transactions, prepared statements, migrations, asynchronous queries, sharding, savepoints, and much more.
 
@@ -115,9 +125,13 @@ This has two major advantages:
 
 Let's start with the most fundamental feature: establishing a connection.
 
+
+{% endshield %}
 ---
 
 # Establishing a Connection
+
+{% shield %}
 
 The first responsibility of an adapter is, unsurprisingly, to connect to a database.
 
@@ -149,7 +163,11 @@ Active Record doesn't scan every installed gem looking for adapters. Instead, it
 
 When `establish_connection` is called, Active Record simply looks up the requested adapter name in this registry. Since `"my_adapter"` isn't registered yet, it has no idea which class should be instantiated.
 
+{% endshield %}
+
 ## Registering the adapter
+
+{% shield %}
 
 To make our adapter discoverable, we need to register it when our gem is loaded.
 
@@ -175,9 +193,13 @@ Running the test again gets us one step further... and immediately reveals the n
 
 This is exactly the workflow we'll follow throughout the rest of this article: write a test, understand why it fails, implement the missing behavior, and repeat until we have a functional adapter.
 
+{% endshield %}
+
 ---
 
 # Creating Our First Table
+
+{% shield %}
 
 Connecting to the database is a good start, but it's not very useful on its own. Let's see if our adapter is capable of creating a table using Active Record's schema DSL.
 
@@ -204,7 +226,11 @@ ActiveRecord::ConnectionAdapters::Quoting::ClassMethods#quote_column_name
 
 Once again, the exception tells us exactly what's missing.
 
+{% endshield %}
+
 ## Why does Active Record need `quote_column_name`?
+
+{% shield %}
 
 Before Active Record can execute any SQL, it must generate it.
 
@@ -239,7 +265,11 @@ The exact quoting syntax depends on the database:
 
 Because we're building a SQLite-based adapter, we simply need to quote identifiers using standard double quotes.
 
+{% endshield %}
+
 ## Implementing the quoting module
+
+{% shield %}
 
 Although we could implement `quote_column_name` directly inside our adapter, Active Record separates responsibilities into modules. Following the same organization makes our adapter easier to understand and keeps it consistent with the built-in adapters.
 
@@ -289,9 +319,13 @@ This is exactly what we want.
 
 Each failure uncovers another responsibility of an Active Record adapter. Instead of trying to understand the entire adapter API at once, we're discovering it organically, one missing method at a time.
 
+{% endshield %}
+
 ---
 
 # Executing SQL
+
+{% shield %}
 
 After implementing identifier quoting, our test progresses a little further before failing again.
 
@@ -328,9 +362,13 @@ As we continue running our test suite, Active Record gradually asks our adapter 
 
 Rather than looking at them as a long checklist, it's easier to understand the role each one plays.
 
+{% endshield %}
+
 ---
 
 ## Is this query modifying the database?
+
+{% shield %}
 
 The first method Active Record needs is `write_query?`.
 
@@ -349,9 +387,13 @@ This information is used internally for features such as transaction handling, q
 
 Fortunately, Active Record already provides a helper to recognize read queries. We simply extend it to treat SQLite's `PRAGMA` statements as read-only operations.
 
+{% endshield %}
+
 ---
 
 ## Executing a statement
+
+{% shield %}
 
 The most important method in the entire adapter is `perform_query`.
 
@@ -437,9 +479,13 @@ Although the method appears long, it only performs three operations:
 
 This final step is important because the rest of Active Record expects query results to use this common representation, regardless of the underlying database.
 
+{% endshield %}
+
 ---
 
 ## Returning query results
+
+{% shield %}
 
 Some database drivers return their own proprietary result objects.
 
@@ -465,7 +511,11 @@ That's the responsibility of the `SchemaStatements` module, which we'll implemen
 If we run our test now, Active Record will throw a cascade of schema-related errors. To solve them all at once, we need to implement the SchemaStatements module and update our main adapter file to handle initialization and basic type mapping.
 ---
 
+{% endshield %}
+
 ## Schema Statements
+
+{% shield %}
 
 Our adapter can now execute SQL, but Active Record needs more than that.
 
@@ -480,7 +530,11 @@ This is called **schema introspection**, and Active Record exposes this function
 
 For our first implementation, we'll start with `data_source_sql`, which Active Record uses to discover tables and views.
 
+{% endshield %}
+
 ## Create the schema statements file:
+
+{% shield %}
 
 ```
 lib/
@@ -591,9 +645,13 @@ end
 
 That is indeed a lot of things to implement, but those are the basic building blocks you need to have a working schema. Now that we have them, let's see how we can use our adapter to do basic Create, Read, Update, and Delete operations.
 
+{% endshield %}
+
 ## CRUD Operations
 
 ### Create and Read 
+
+{% shield %}
 
 Let's write a test to verify we can create a record and read it back:
 
@@ -704,7 +762,11 @@ end
 end
 ```
 
+{% endshield %}
+
 ## Returning the generated ID
+
+{% shield %}
 
 There is one more problem with `CREATE`.
 
@@ -740,7 +802,11 @@ end
 Now Active Record can retrieve the generated primary key and assign it to the
 Ruby object.
 
+{% endshield %}
+
 ### Update and Delete
+
+{% shield %}
 
 Test :
 
@@ -789,7 +855,11 @@ This is one of the strengths of Active Record's adapter architecture: once an
 adapter provides the primitives expected by the framework, higher-level
 operations can work without requiring database-specific implementations.
 
+{% endshield %}
+
 ## What we've implemented
+
+{% shield %}
 
 At this point, our minimal adapter can:
 
@@ -806,3 +876,5 @@ At this point, our minimal adapter can:
 That's already enough to make a surprisingly large part of Active Record work.
 
 The whole code can be found [on my github](https://github.com/GPif/arsimple){:target="_blank"}
+
+{% endshield %}

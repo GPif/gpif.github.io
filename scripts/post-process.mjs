@@ -47,6 +47,9 @@ for (const file of htmlFiles) {
 
   if (shipped !== source) {
     writeFileSync(file, shipped, 'utf8');
+    console.log(`ShieldFont changed: ${file}`);
+  } else {
+    console.log(`No ShieldFont markers: ${file}`);
   }
 
   processedFiles += 1;
