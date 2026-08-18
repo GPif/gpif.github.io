@@ -53,7 +53,10 @@ jobs:
 
       - name: Install Node dependencies
         run: npm ci
-  
+
+      - name: Build Chirpy assets
+        run: npm run build  
+
       - name: Build site
         run: bundle exec jekyll b -d "_site${{ steps.pages.outputs.base_path }}"
         env:
